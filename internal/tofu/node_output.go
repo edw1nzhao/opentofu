@@ -427,6 +427,24 @@ If you do intend to export this data, annotate the output value as sensitive by 
 		return diags.Append(ephDiags)
 	}
 
+	// During planning, warn if a root module output is changing from
+	// sensitive to non-sensitive, since the value will then appear in
+	// cleartext in future plan and state output.
+	if n.Planning && n.Addr.Module.IsRoot() && !n.Config.Sensitive {
+		if existing := state.OutputValue(n.Addr); existing != nil && existing.Sensitive {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Warning,
+				fmt.Sprintf("Output %q will no longer be marked as sensitive", n.Addr.OutputValue.Name),
+				fmt.Sprintf(
+					"The output %q was previously marked as sensitive but will no longer "+
+						"be after applying this change. This means the value will be visible "+
+						"in plan and state output.",
+					n.Addr.OutputValue.Name,
+				),
+			))
+		}
+	}
+
 	n.setValue(state, changes, val)
 
 	// If we were able to evaluate a new value, we can update that in the

@@ -326,6 +326,67 @@ func TestNodeApplyableOutputExecute_sensitiveValueAndOutput(t *testing.T) {
 	}
 }
 
+func TestNodeApplyableOutputExecute_sensitiveToNonSensitiveWarning(t *testing.T) {
+	evalCtx := new(MockEvalContext)
+	state := states.NewState()
+	// Set an existing sensitive output in state.
+	state.Module(addrs.RootModuleInstance).SetOutputValue("secret", cty.StringVal("password"), true, "")
+
+	evalCtx.StateState = state.SyncWrapper()
+	evalCtx.ChangesChanges = plans.NewChanges().SyncWrapper()
+	evalCtx.ChecksState = checks.NewState(nil)
+
+	// Config no longer marks the output as sensitive.
+	config := &configs.Output{Name: "secret"}
+	addr := addrs.OutputValue{Name: config.Name}.Absolute(addrs.RootModuleInstance)
+	node := &NodeApplyableOutput{Config: config, Addr: addr, Planning: true}
+	evalCtx.EvaluateExprResult = cty.StringVal("password")
+
+	diags := node.Execute(t.Context(), evalCtx, walkPlan)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Err())
+	}
+
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Description().Summary, "will no longer be marked as sensitive") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected a warning about the output no longer being sensitive, but got none")
+	}
+}
+
+func TestNodeApplyableOutputExecute_nonSensitiveToSensitiveNoWarning(t *testing.T) {
+	evalCtx := new(MockEvalContext)
+	state := states.NewState()
+	// Set an existing non-sensitive output in state.
+	state.Module(addrs.RootModuleInstance).SetOutputValue("secret", cty.StringVal("password"), false, "")
+
+	evalCtx.StateState = state.SyncWrapper()
+	evalCtx.ChangesChanges = plans.NewChanges().SyncWrapper()
+	evalCtx.ChecksState = checks.NewState(nil)
+
+	// Config now marks the output as sensitive.
+	config := &configs.Output{Name: "secret", Sensitive: true}
+	addr := addrs.OutputValue{Name: config.Name}.Absolute(addrs.RootModuleInstance)
+	node := &NodeApplyableOutput{Config: config, Addr: addr, Planning: true}
+	evalCtx.EvaluateExprResult = cty.StringVal("password")
+
+	diags := node.Execute(t.Context(), evalCtx, walkPlan)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Err())
+	}
+
+	for _, d := range diags {
+		if strings.Contains(d.Description().Summary, "will no longer be marked as sensitive") {
+			t.Fatal("should not warn about sensitivity when going from non-sensitive to sensitive")
+		}
+	}
+}
+
 func TestNodeDestroyableOutputExecute(t *testing.T) {
 	outputAddr := addrs.OutputValue{Name: "foo"}.Absolute(addrs.RootModuleInstance)
 
